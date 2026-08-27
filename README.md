@@ -14,7 +14,20 @@ Utilities for extracting Jira Cloud issue data and loading it into PostgreSQL fo
 - overlaps incremental windows by a configurable number of minutes to avoid boundary misses
 - uses Jira `issue_id` as the PostgreSQL primary key
 - uses PostgreSQL `ON CONFLICT` to update existing records
-- keeps issues that leave the active filter and marks them with `in_scope = false`, so closed issues do not remain stale in reporting
+- keeps all matching Jira statuses, including closed/resolved/done issues, as an offline reporting copy
+
+## Jira filter
+
+The sync uses this business filter and deliberately does **not** filter on status:
+
+```jql
+issuetype = Bug
+AND origin = "Security Testing"
+AND "Cross Functional Team" = "EPO/Product Intervention"
+AND project IN (...configured project list...)
+```
+
+This means closed issues are retained in PostgreSQL together with open issues. `status` and `status_category` remain available as columns so Power BI can apply status filters without losing the underlying historical/offline dataset.
 
 ## Setup
 
@@ -65,27 +78,32 @@ python .\jira_postgres_sync.py
 
 The script creates these objects inside the configured PostgreSQL database if they do not already exist:
 
-- `jira_issues` — current Jira issue state
+- `jira_issues` — current Jira issue state, including all matching statuses
 - `jira_sync_state` — checkpoint and sync status
-- `vw_security_jira_issues` — active security issues intended for reporting/Power BI
+- `vw_security_jira_issues` — matching security issues intended for reporting/Power BI
 
 The PostgreSQL database and database user themselves must already exist.
 
 ## Incremental behavior
 
-On the first run there is no checkpoint, so all bugs from the configured project set are queried. After a successful run, `jira_sync_state.last_sync_at` is recorded.
+On the first run there is no checkpoint, so all Jira issues matching the security filter are queried regardless of status. After a successful run, `jira_sync_state.last_sync_at` is recorded.
 
 Later runs query Jira using approximately:
 
 ```jql
 issuetype = Bug
+AND origin = "Security Testing"
+AND "Cross Functional Team" = "EPO/Product Intervention"
 AND project IN (...)
 AND updated >= "<last successful sync minus overlap>"
+ORDER BY updated ASC
 ```
 
-The incremental JQL intentionally does **not** include `status != Closed`. This allows a previously open issue that becomes closed to be returned on the next sync and marked `in_scope = false` in PostgreSQL.
+The status condition is intentionally omitted so changes to closed, resolved, or done issues are still synchronized.
 
-The reporting view exposes only rows where `in_scope = true`.
+## Configuration note
+
+Python `ConfigParser` interpolation is disabled in the sync script, so PostgreSQL passwords containing `%` are accepted without escaping the character.
 
 ## Security
 
