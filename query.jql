@@ -1,0 +1,34 @@
+issuetype = Bug
+AND origin = "Security Testing"
+AND "Cross Functional Team" IS NOT EMPTY
+AND project IN (
+    "AI ML Development",
+    "Data Bridge",
+    "LifeSphere Advanced Compliance Docs",
+    "LifeSphere Advanced Signals",
+    "LifeSphere Business Intelligence",
+    "LifeSphere Connect",
+    "LifeSphere CTMS",
+    "LifeSphere EasyDocs",
+    "LifeSphere EDC",
+    "LifeSphere Electronic Submission (Legacy)",
+    "LifeSphere EV Triage",
+    "LifeSphere Literature Intelligence",
+    "LifeSphere Medical Information",
+    "LifeSphere MultiVigilance",
+    "LifeSphere Product Complaints",
+    "LifeSphere Regulatory",
+    "LifeSphere Reporter MT",
+    "LifeSphere Reporter PV",
+    "LifeSphere RIDS",
+    "LifeSphere Safety Document Distribution",
+    "LifeSphere Safety MultiVigilance (Legacy)",
+    "LifeSphere Signals Intelligence",
+    "LifeSphere SUSAR Reporting",
+    "LifeSphere Trial Disclosure",
+    "LifeSphere Vet Safety",
+    "LifeSphere RIMS",
+    "Platform",
+    "SPORIFY v2",
+    "Navix Agents"
+)
