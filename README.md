@@ -1,109 +1,143 @@
 # Jira Extract
 
-Utilities for extracting Jira Cloud issue data and loading it into PostgreSQL for reporting/Power BI.
+Jira Cloud extraction and PostgreSQL synchronization for reporting/Power BI.
 
-## PostgreSQL sync
+## Why this refactor exists
 
-`jira_postgres_sync.py` now deliberately uses the working `Jira_extract.py` implementation as its Jira retrieval baseline:
+The working local exporter and the PostgreSQL sync had drifted apart. In particular, the working exporter was using:
 
-- same scoped-token Basic authentication pattern
-- same `/rest/api/3/field` custom-field discovery pattern
-- same `/rest/api/3/search/jql` POST request format
-- same `nextPageToken` pagination approach
-- literal baseline JQL rather than reconstructing the business filter dynamically
-- no status filter, so Open/Closed/Resolved/Done issues are kept in the offline database copy
+```jql
+AND "Cross Functional Team" IS NOT EMPTY
+```
 
-The database layer is added after retrieval and uses Jira `issue_id` as the PostgreSQL primary key with `ON CONFLICT` UPSERT.
+while the PostgreSQL version had been using an exact value filter. That made the two scripts return different datasets. The project lists had also diverged.
 
-## Jira filter
+The refactored code now has **one Jira client and one JQL file shared by both outputs**, so the Excel/CSV exporter and PostgreSQL loader cannot silently use different Jira logic.
+
+## Structure
+
+- `jira_core.py` — authentication, retries, Jira field discovery, pagination and record normalization
+- `query.jql` — the single source of truth for the Jira business query
+- `Jira_extract.py` — Excel/CSV exporter built on `jira_core.py`
+- `jira_postgres_sync.py` — PostgreSQL full/incremental sync built on the same core
+- `config.example.ini` — configuration template
+- `requirements.txt` — Python dependencies
+
+## Current Jira baseline
+
+`query.jql` follows the working extractor baseline and deliberately has **no status filter**, so the offline database can retain open, closed, resolved and done issues.
+
+The important working condition is:
 
 ```jql
 issuetype = Bug
 AND origin = "Security Testing"
-AND "Cross Functional Team" = "EPO/Product Intervention"
-AND project IN (...configured project list...)
+AND "Cross Functional Team" IS NOT EMPTY
+AND project IN (...)
 ```
 
-There is intentionally no `status` condition.
+If the project set changes, edit only `query.jql`. Both scripts will immediately use the same query.
 
-## Full vs incremental behavior
+## Setup
 
-The script automatically performs a full baseline pull whenever:
+Install dependencies:
 
-- `jira_issues` contains zero rows, or
-- no successful checkpoint exists, or
-- `--full` is supplied.
+```powershell
+pip install -r requirements.txt
+```
 
-Force a full pull with:
+Create the local configuration:
+
+```powershell
+Copy-Item config.example.ini config.ini
+```
+
+Edit `config.ini` with your Jira Cloud ID/site and PostgreSQL settings.
+
+Set the Jira token in the environment:
+
+```powershell
+$env:jira_api_token="YOUR_TOKEN"
+```
+
+`config.ini` is ignored by Git. `ConfigParser` interpolation is disabled, so PostgreSQL passwords containing `%` work without escaping.
+
+## Validate Jira first
+
+Both scripts now use the same Jira code and `query.jql`. You can validate the Jira side with:
+
+```powershell
+python .\Jira_extract.py
+```
+
+It will generate:
+
+- `jira_security_bugs.xlsx`
+- `jira_security_bugs.csv`
+
+The Jira HTTP session retries temporary connection failures, HTTP 429 rate limits and common 5xx responses. This is useful for large exports that require many Jira pages.
+
+## PostgreSQL full baseline
+
+Force a complete load with:
 
 ```powershell
 python .\jira_postgres_sync.py --full
 ```
 
-A full pull uses the literal baseline JQL exactly, without an `updated` clause or `ORDER BY`, so its Jira retrieval behavior can be compared directly with the known-good `Jira_extract.py` script.
+The script creates these objects automatically in the configured database:
 
-Once the database contains data and a successful checkpoint exists, later runs append an incremental condition similar to:
+- `jira_issues`
+- `jira_sync_state`
+- `vw_security_jira_issues`
+
+The PostgreSQL database and user must already exist.
+
+Each Jira page is UPSERTed and committed using Jira `issue_id` as the primary key. If a later Jira page fails because of a transient network problem, pages already written remain in PostgreSQL, but the successful-sync checkpoint is **not** advanced. A retry safely replays data using `ON CONFLICT`.
+
+## Incremental sync
+
+After a successful baseline, run:
+
+```powershell
+python .\jira_postgres_sync.py
+```
+
+The sync reads `jira_sync_state.last_sync_at` and adds approximately:
 
 ```jql
 AND updated >= "<last successful sync minus overlap>"
 ORDER BY updated ASC
 ```
 
-If an empty database receives zero Jira issues during a full baseline pull, the script raises an error and does **not** save a success checkpoint. This prevents a zero-result first run from incorrectly switching future runs into incremental mode.
+The default overlap is five minutes and can be changed in `config.ini`.
 
-## Setup
+A full load is automatically selected if `jira_issues` is empty or there is no successful checkpoint. You can always override with `--full`.
 
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Copy the example configuration:
+## Alternate config or JQL files
 
 ```powershell
-Copy-Item config.example.ini config.ini
+python .\Jira_extract.py --config C:\path\config.ini --jql C:\path\query.jql
+python .\jira_postgres_sync.py --full --config C:\path\config.ini --jql C:\path\query.jql
 ```
 
-Edit `config.ini` with Jira Cloud ID/site details and PostgreSQL connection details.
-
-The real `config.ini` is excluded by `.gitignore` because it can contain database credentials.
-
-Set the Jira token as an environment variable:
+You can also set:
 
 ```powershell
-$env:jira_api_token="YOUR_TOKEN"
-python .\jira_postgres_sync.py --full
+$env:JIRA_SYNC_CONFIG="C:\path\config.ini"
+$env:JIRA_JQL_FILE="C:\path\query.jql"
 ```
 
-Linux/macOS:
+## Power BI
 
-```bash
-export jira_api_token='YOUR_TOKEN'
-python3 jira_postgres_sync.py --full
+Point Power BI/PostgreSQL Gateway at:
+
+```text
+vw_security_jira_issues
 ```
 
-You can optionally use another INI path:
-
-```powershell
-$env:JIRA_SYNC_CONFIG="C:\path\to\config.ini"
-python .\jira_postgres_sync.py --full
-```
-
-## Database objects
-
-The script creates these objects inside the configured PostgreSQL database if they do not already exist:
-
-- `jira_issues` — offline/current copy of matching Jira issues across all statuses
-- `jira_sync_state` — incremental checkpoint and sync status
-- `vw_security_jira_issues` — Power BI/reporting view over the stored Jira issues
-
-The PostgreSQL database and database user themselves must already exist.
-
-## Configuration note
-
-Python `ConfigParser` interpolation is disabled, so PostgreSQL passwords containing `%` work without escaping the character.
+The view includes all synchronized statuses. Apply status or Cross Functional Team filtering in Power BI without deleting the underlying offline Jira copy.
 
 ## Security
 
-Do not commit API tokens or production database passwords. `config.ini` is ignored by Git and `config.example.ini` contains placeholders only.
+Do not commit Jira API tokens or production database passwords. Keep the scoped Jira token in an environment variable and keep `config.ini` local.
