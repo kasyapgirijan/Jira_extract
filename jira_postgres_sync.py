@@ -9,7 +9,8 @@ import psycopg
 
 CONFIG_FILE = os.getenv("JIRA_SYNC_CONFIG", "config.ini")
 
-config = configparser.ConfigParser()
+# Disable ConfigParser interpolation so passwords containing '%' work normally.
+config = configparser.ConfigParser(interpolation=None)
 if not config.read(CONFIG_FILE):
     raise FileNotFoundError(f"Could not read configuration file: {CONFIG_FILE}")
 
@@ -33,25 +34,46 @@ SYNC_NAME = config["sync"].get("sync_name", "jira_security_issues")
 SYNC_OVERLAP_MINUTES = config["sync"].getint("overlap_minutes", 5)
 
 PROJECTS = [
-    "aRcore Platform Development", "AI ML Development", "Data Bridge",
-    "LifeSphere Advanced Compliance Docs", "LifeSphere Advanced Signals",
-    "LifeSphere Business Intelligence", "LifeSphere Connect", "LifeSphere CTMS",
-    "LifeSphere EasyDocs", "LifeSphere EDC", "LifeSphere Electronic Submission (Legacy)",
-    "LifeSphere EV Triage", "LifeSphere Literature Intelligence",
-    "LifeSphere Medical Information", "LifeSphere MultiVigilance",
-    "LifeSphere Product Complaints", "LifeSphere Regulatory",
-    "LifeSphere Reporter MT", "LifeSphere Reporter PV", "LifeSphere RIDS",
-    "LifeSphere Safety Document Distribution", "LifeSphere Safety MultiVigilance (Legacy)",
-    "LifeSphere Signals Intelligence", "LifeSphere SUSAR Reporting",
-    "LifeSphere Trial Disclosure", "LifeSphere Vet Safety", "LSMW Admin App",
-    "Navix Agents", "Platform", "SPORIFY v2"
+    "aRcore Platform Development",
+    "AI ML Development",
+    "Data Bridge",
+    "LifeSphere Advanced Compliance Docs",
+    "LifeSphere Advanced Signals",
+    "LifeSphere Business Intelligence",
+    "LifeSphere Connect",
+    "LifeSphere CTMS",
+    "LifeSphere EasyDocs",
+    "LifeSphere EDC",
+    "LifeSphere Electronic Submission (Legacy)",
+    "LifeSphere EV Triage",
+    "LifeSphere Literature Intelligence",
+    "LifeSphere Medical Information",
+    "LifeSphere MultiVigilance",
+    "LifeSphere Product Complaints",
+    "LifeSphere Regulatory",
+    "LifeSphere Reporter MT",
+    "LifeSphere Reporter PV",
+    "LifeSphere RIDS",
+    "LifeSphere Safety Document Distribution",
+    "LifeSphere Safety MultiVigilance (Legacy)",
+    "LifeSphere Signals Intelligence",
+    "LifeSphere SUSAR Reporting",
+    "LifeSphere Trial Disclosure",
+    "LifeSphere Vet Safety",
+    "LSMW Admin App",
+    "Navix Agents",
+    "Platform",
+    "SPORIFY v2",
 ]
 
 
 def get_db_connection():
     return psycopg.connect(
-        host=PG_HOST, port=PG_PORT, dbname=PG_DATABASE,
-        user=PG_USER, password=PG_PASSWORD
+        host=PG_HOST,
+        port=PG_PORT,
+        dbname=PG_DATABASE,
+        user=PG_USER,
+        password=PG_PASSWORD,
     )
 
 
@@ -89,6 +111,7 @@ def initialize_database(conn):
             db_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         """)
+
         cur.execute("""
         CREATE TABLE IF NOT EXISTS jira_sync_state (
             sync_name VARCHAR(100) PRIMARY KEY,
@@ -99,10 +122,26 @@ def initialize_database(conn):
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_updated ON jira_issues(jira_updated_at);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_project ON jira_issues(project_key);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_status ON jira_issues(status);")
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_scope ON jira_issues(in_scope);")
+
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jira_issues_updated "
+            "ON jira_issues(jira_updated_at);"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jira_issues_project "
+            "ON jira_issues(project_key);"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jira_issues_status "
+            "ON jira_issues(status);"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jira_issues_scope "
+            "ON jira_issues(in_scope);"
+        )
+
+        # This view intentionally includes Open, Closed, Done, etc.
+        # Status is retained as a column for Power BI filtering.
         cur.execute("""
         CREATE OR REPLACE VIEW vw_security_jira_issues AS
         SELECT issue_id, issue_key, summary, issue_type, status, status_category,
@@ -113,6 +152,7 @@ def initialize_database(conn):
         FROM jira_issues
         WHERE in_scope = TRUE;
         """)
+
     conn.commit()
 
 
@@ -121,7 +161,7 @@ def build_headers():
     return {
         "Authorization": f"Basic {encoded}",
         "Accept": "application/json",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
 
@@ -129,20 +169,31 @@ HEADERS = build_headers()
 
 
 def test_jira_connection():
-    r = requests.get(f"{BASE_URL}/rest/api/3/myself", headers=HEADERS, timeout=30)
+    r = requests.get(
+        f"{BASE_URL}/rest/api/3/myself",
+        headers=HEADERS,
+        timeout=30,
+    )
     r.raise_for_status()
     print("Jira authenticated as:", r.json().get("displayName"))
 
 
 def get_jira_fields():
-    r = requests.get(f"{BASE_URL}/rest/api/3/field", headers=HEADERS, timeout=60)
+    r = requests.get(
+        f"{BASE_URL}/rest/api/3/field",
+        headers=HEADERS,
+        timeout=60,
+    )
     r.raise_for_status()
     return r.json()
 
 
 def get_last_sync(conn):
     with conn.cursor() as cur:
-        cur.execute("SELECT last_sync_at FROM jira_sync_state WHERE sync_name = %s", (SYNC_NAME,))
+        cur.execute(
+            "SELECT last_sync_at FROM jira_sync_state WHERE sync_name = %s",
+            (SYNC_NAME,),
+        )
         row = cur.fetchone()
     return row[0] if row else None
 
@@ -156,7 +207,9 @@ def save_sync_success(conn, sync_started_at, issue_count):
         ON CONFLICT (sync_name) DO UPDATE SET
             last_sync_at = EXCLUDED.last_sync_at,
             last_issue_count = EXCLUDED.last_issue_count,
-            last_status = 'SUCCESS', last_error = NULL, updated_at = NOW();
+            last_status = 'SUCCESS',
+            last_error = NULL,
+            updated_at = NOW();
         """, (SYNC_NAME, sync_started_at, issue_count))
 
 
@@ -166,7 +219,9 @@ def save_sync_failure(conn, error):
         INSERT INTO jira_sync_state (sync_name, last_status, last_error, updated_at)
         VALUES (%s, 'FAILED', %s, NOW())
         ON CONFLICT (sync_name) DO UPDATE SET
-            last_status = 'FAILED', last_error = EXCLUDED.last_error, updated_at = NOW();
+            last_status = 'FAILED',
+            last_error = EXCLUDED.last_error,
+            updated_at = NOW();
         """, (SYNC_NAME, str(error)[:5000]))
 
 
@@ -175,14 +230,23 @@ def escape_jql(value):
 
 
 def build_jql(last_sync):
-    projects = ",\n".join(f'"{escape_jql(p)}"' for p in PROJECTS)
+    projects = ",\n".join(f'    "{escape_jql(p)}"' for p in PROJECTS)
+
+    # No status condition: this keeps an offline copy of all matching
+    # security issues, including Closed/Done/Resolved items.
     jql = f'''issuetype = Bug
+AND origin = "Security Testing"
+AND "Cross Functional Team" = "EPO/Product Intervention"
 AND project IN (
 {projects}
 )'''
+
     if last_sync:
         incremental_from = last_sync - timedelta(minutes=SYNC_OVERLAP_MINUTES)
-        jql += f'\nAND updated >= "{incremental_from.strftime("%Y-%m-%d %H:%M")}"'
+        jira_time = incremental_from.strftime("%Y-%m-%d %H:%M")
+        jql += f'\nAND updated >= "{jira_time}"'
+
+    jql += "\nORDER BY updated ASC"
     return jql
 
 
@@ -192,7 +256,11 @@ def jira_value(value):
     if isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, list):
-        return ", ".join(str(v) for v in (jira_value(x) for x in value) if v is not None)
+        return ", ".join(
+            str(v)
+            for v in (jira_value(x) for x in value)
+            if v is not None
+        )
     if isinstance(value, dict):
         for key in ("displayName", "value", "name", "key", "label", "id"):
             if value.get(key) is not None:
@@ -204,39 +272,66 @@ def jira_value(value):
 def version_names(values):
     if not values:
         return None
-    return ", ".join(v.get("name") for v in values if isinstance(v, dict) and v.get("name"))
+    return ", ".join(
+        v.get("name")
+        for v in values
+        if isinstance(v, dict) and v.get("name")
+    )
 
 
 def is_issue_in_scope(fields, origin_field, cross_team_field):
     issue_type = (fields.get("issuetype") or {}).get("name")
-    status = (fields.get("status") or {}).get("name")
+    project_name = (fields.get("project") or {}).get("name")
     origin = jira_value(fields.get(origin_field))
     cross_team = jira_value(fields.get(cross_team_field))
+
+    # Deliberately no status check. Closed issues remain in scope.
     return (
         issue_type == "Bug"
         and origin == "Security Testing"
         and cross_team == "EPO/Product Intervention"
-        and status != "Closed"
+        and project_name in PROJECTS
     )
 
 
 def search_jira(jql, requested_fields):
     url = f"{BASE_URL}/rest/api/3/search/jql"
-    issues, next_page_token, page = [], None, 1
+    issues = []
+    next_page_token = None
+    page = 1
+
     while True:
-        payload = {"jql": jql, "fields": requested_fields, "maxResults": 100}
+        payload = {
+            "jql": jql,
+            "fields": requested_fields,
+            "maxResults": 100,
+        }
+
         if next_page_token:
             payload["nextPageToken"] = next_page_token
+
         print(f"Retrieving Jira page {page}...")
-        r = requests.post(url, headers=HEADERS, json=payload, timeout=120)
-        r.raise_for_status()
+        r = requests.post(
+            url,
+            headers=HEADERS,
+            json=payload,
+            timeout=120,
+        )
+
+        if not r.ok:
+            print("Jira request failed:", r.status_code)
+            print(r.text)
+            r.raise_for_status()
+
         data = r.json()
         current = data.get("issues", [])
         issues.extend(current)
         print(f"  Received {len(current)}; total {len(issues)}")
+
         next_page_token = data.get("nextPageToken")
         if not next_page_token:
             return issues
+
         page += 1
 
 
@@ -292,6 +387,7 @@ def issue_to_record(issue, origin_field, cross_team_field, seccon_field):
     fields = issue.get("fields", {})
     project = fields.get("project") or {}
     status = fields.get("status") or {}
+
     return {
         "issue_id": int(issue["id"]),
         "issue_key": issue["key"],
@@ -325,7 +421,14 @@ def issue_to_record(issue, origin_field, cross_team_field, seccon_field):
 def upsert_issues(conn, issues, origin_field, cross_team_field, seccon_field):
     with conn.cursor() as cur:
         for issue in issues:
-            cur.execute(UPSERT_SQL, issue_to_record(issue, origin_field, cross_team_field, seccon_field))
+            record = issue_to_record(
+                issue,
+                origin_field,
+                cross_team_field,
+                seccon_field,
+            )
+            cur.execute(UPSERT_SQL, record)
+
     return len(issues)
 
 
@@ -336,41 +439,75 @@ def main():
 
     with get_db_connection() as conn:
         initialize_database(conn)
+
         try:
             last_sync = get_last_sync(conn)
             print("Mode:", "incremental" if last_sync else "initial full load")
+
             if last_sync:
                 print("Last successful sync:", last_sync)
 
-            field_map = {f["name"].lower(): f["id"] for f in get_jira_fields() if f.get("name")}
+            field_map = {
+                f["name"].lower(): f["id"]
+                for f in get_jira_fields()
+                if f.get("name")
+            }
+
             origin_field = field_map.get("origin")
             cross_team_field = field_map.get("cross functional team")
             seccon_field = field_map.get("seccon")
+
             if not origin_field or not cross_team_field:
                 raise RuntimeError("Required Jira custom fields were not found")
 
             requested_fields = [
-                "summary", "issuetype", "status", "project", "priority", "resolution",
-                "assignee", "reporter", "creator", "created", "updated", "versions",
-                "fixVersions", "watches", "security", origin_field, cross_team_field
+                "summary",
+                "issuetype",
+                "status",
+                "project",
+                "priority",
+                "resolution",
+                "assignee",
+                "reporter",
+                "creator",
+                "created",
+                "updated",
+                "versions",
+                "fixVersions",
+                "watches",
+                "security",
+                origin_field,
+                cross_team_field,
             ]
+
             if seccon_field:
                 requested_fields.append(seccon_field)
 
             jql = build_jql(last_sync)
             print("JQL:\n", jql)
+
             issues = search_jira(jql, requested_fields)
-            processed = upsert_issues(conn, issues, origin_field, cross_team_field, seccon_field)
+            processed = upsert_issues(
+                conn,
+                issues,
+                origin_field,
+                cross_team_field,
+                seccon_field,
+            )
+
             save_sync_success(conn, sync_started_at, processed)
             conn.commit()
             print(f"Sync successful. Processed {processed} Jira issues.")
+
         except Exception as error:
             conn.rollback()
+
             try:
                 save_sync_failure(conn, error)
                 conn.commit()
             except Exception:
                 pass
+
             raise
 
 
