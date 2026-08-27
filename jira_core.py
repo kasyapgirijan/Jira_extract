@@ -19,10 +19,12 @@ def load_config(path=None):
     if not parser.read(config_path):
         raise FileNotFoundError(f"Could not read configuration file: {config_path}")
 
-    token_env = parser["jira"].get("token_env", "jira_api_token")
-    token = os.environ.get(token_env)
+    token = parser["jira"].get("api_token", "").strip()
     if not token:
-        raise RuntimeError(f"Environment variable '{token_env}' is not set")
+        raise RuntimeError(
+            "Jira API token is missing from config.ini. "
+            "Add 'api_token = YOUR_TOKEN' under the [jira] section."
+        )
 
     return {
         "config_path": config_path,
