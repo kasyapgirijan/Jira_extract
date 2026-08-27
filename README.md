@@ -52,19 +52,32 @@ Create the local configuration:
 Copy-Item config.example.ini config.ini
 ```
 
-Edit `config.ini` with your Jira Cloud ID/site and PostgreSQL settings.
+Edit `config.ini` with your Jira and PostgreSQL settings, including the scoped Jira API token:
 
-Set the Jira token in the environment:
+```ini
+[jira]
+email = your.email@company.com
+api_token = YOUR_JIRA_API_TOKEN
+cloud_id = YOUR-CLOUD-ID
+site_url = https://YOUR-SITE.atlassian.net
 
-```powershell
-$env:jira_api_token="YOUR_TOKEN"
+[postgres]
+host = localhost
+port = 5432
+database = jira_reporting
+user = jira_sync
+password = YOUR_POSTGRES_PASSWORD
+
+[sync]
+sync_name = jira_security_issues
+overlap_minutes = 5
 ```
 
-`config.ini` is ignored by Git. `ConfigParser` interpolation is disabled, so PostgreSQL passwords containing `%` work without escaping.
+No Jira token environment variable is required. `config.ini` is ignored by Git and must remain local/private. `ConfigParser` interpolation is disabled, so PostgreSQL passwords containing `%` work without escaping.
 
 ## Validate Jira first
 
-Both scripts now use the same Jira code and `query.jql`. You can validate the Jira side with:
+Both scripts use the same Jira code and `query.jql`. You can validate the Jira side with:
 
 ```powershell
 python .\Jira_extract.py
@@ -121,12 +134,14 @@ python .\Jira_extract.py --config C:\path\config.ini --jql C:\path\query.jql
 python .\jira_postgres_sync.py --full --config C:\path\config.ini --jql C:\path\query.jql
 ```
 
-You can also set:
+You can also set only the file-location overrides if needed:
 
 ```powershell
 $env:JIRA_SYNC_CONFIG="C:\path\config.ini"
 $env:JIRA_JQL_FILE="C:\path\query.jql"
 ```
+
+These environment variables point to files only; the Jira API token itself is read from `config.ini`.
 
 ## Power BI
 
@@ -140,4 +155,4 @@ The view includes all synchronized statuses. Apply status or Cross Functional Te
 
 ## Security
 
-Do not commit Jira API tokens or production database passwords. Keep the scoped Jira token in an environment variable and keep `config.ini` local.
+Do not commit `config.ini`. It contains the Jira API token and may contain the production PostgreSQL password. Keep the file local to the sync host and restrict NTFS permissions to the Windows account or service account that runs the scheduled task.
