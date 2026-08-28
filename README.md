@@ -38,6 +38,8 @@ AND project IN (...)
 
 If the project set changes, edit only `query.jql`. Both scripts will immediately use the same query.
 
+The shared Jira layer also discovers and extracts the custom fields `Origin`, `Cross Functional Team`, `Security SecCon`/`SecCon`, and `Severity`. The Severity value is stored as text (for example `Severity-1`, `Severity-2`, `Severity-3`) in PostgreSQL and is also included in Excel/CSV exports.
+
 ## Setup
 
 Install dependencies:
@@ -108,6 +110,8 @@ The PostgreSQL database and user must already exist.
 
 Each Jira page is UPSERTed and committed using Jira `issue_id` as the primary key. If a later Jira page fails because of a transient network problem, pages already written remain in PostgreSQL, but the successful-sync checkpoint is **not** advanced. A retry safely replays data using `ON CONFLICT`.
 
+When a newly-added field such as `Severity` needs to be backfilled for existing historical rows, run one `--full` sync. The schema migration itself is automatic (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`).
+
 ## Incremental sync
 
 After a successful baseline, run:
@@ -151,7 +155,7 @@ Point Power BI/PostgreSQL Gateway at:
 vw_security_jira_issues
 ```
 
-The view includes all synchronized statuses. Apply status or Cross Functional Team filtering in Power BI without deleting the underlying offline Jira copy.
+The view includes all synchronized statuses and the Severity field. Apply status, Severity, or Cross Functional Team filtering in Power BI without deleting the underlying offline Jira copy.
 
 ## Security
 
