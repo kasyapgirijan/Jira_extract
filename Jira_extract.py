@@ -80,6 +80,7 @@ def main():
         "origin": "Origin",
         "cross_functional_team": "Cross Functional Team",
         "seccon": "SecCon",
+        "severity": "Severity",
         "issue_url": "Issue URL",
     })
 
