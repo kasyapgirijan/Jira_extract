@@ -221,21 +221,31 @@ def discover_fields(client):
         "SecCon",
         "Security Seccon",
     )
+    severity = client.resolve_field(
+        fmap,
+        "Severity",
+        "Security Severity",
+        "Custom field (Severity)",
+    )
 
     print("Discovered Jira field IDs:")
     print("  Origin:", origin)
     print("  Cross Functional Team:", cross_team)
     print("  Security SecCon:", seccon)
+    print("  Severity:", severity)
 
     if not origin:
         raise RuntimeError("Required Jira field 'Origin' was not found")
     if not cross_team:
         raise RuntimeError("Required Jira field 'Cross Functional Team' was not found")
+    if not severity:
+        print("WARNING: Jira field 'Severity' was not found; severity will be blank.")
 
     return {
         "origin": origin,
         "cross_team": cross_team,
         "seccon": seccon,
+        "severity": severity,
     }
 
 
@@ -261,6 +271,7 @@ def requested_fields(custom_fields):
         custom_fields.get("origin"),
         custom_fields.get("cross_team"),
         custom_fields.get("seccon"),
+        custom_fields.get("severity"),
     ):
         if field_id and field_id not in fields:
             fields.append(field_id)
@@ -306,6 +317,11 @@ def issue_to_record(issue, site_url, custom_fields):
         "seccon": (
             jira_value(fields.get(custom_fields.get("seccon")))
             if custom_fields.get("seccon")
+            else None
+        ),
+        "severity": (
+            jira_value(fields.get(custom_fields.get("severity")))
+            if custom_fields.get("severity")
             else None
         ),
         "issue_url": f"{site_url.rstrip('/')}/browse/{issue.get('key')}",
