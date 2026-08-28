@@ -39,6 +39,7 @@ INSERT INTO jira_issues (
     origin,
     cross_functional_team,
     seccon,
+    severity,
     issue_url,
     raw_json,
     db_created_at,
@@ -68,6 +69,7 @@ VALUES (
     %(origin)s,
     %(cross_functional_team)s,
     %(seccon)s,
+    %(severity)s,
     %(issue_url)s,
     %(raw_json)s::jsonb,
     NOW(),
@@ -97,11 +99,13 @@ DO UPDATE SET
     origin = EXCLUDED.origin,
     cross_functional_team = EXCLUDED.cross_functional_team,
     seccon = EXCLUDED.seccon,
+    severity = EXCLUDED.severity,
     issue_url = EXCLUDED.issue_url,
     raw_json = EXCLUDED.raw_json,
     db_updated_at = NOW()
 WHERE jira_issues.jira_updated_at IS DISTINCT FROM EXCLUDED.jira_updated_at
-   OR jira_issues.raw_json IS DISTINCT FROM EXCLUDED.raw_json;
+   OR jira_issues.raw_json IS DISTINCT FROM EXCLUDED.raw_json
+   OR jira_issues.severity IS DISTINCT FROM EXCLUDED.severity;
 """
 
 
@@ -143,6 +147,7 @@ def initialize_database(conn):
             origin TEXT,
             cross_functional_team TEXT,
             seccon TEXT,
+            severity TEXT,
             issue_url TEXT,
             raw_json JSONB,
             db_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -154,6 +159,7 @@ def initialize_database(conn):
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS raw_json JSONB;")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS cross_functional_team TEXT;")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS seccon TEXT;")
+        cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS severity TEXT;")
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS jira_sync_state (
@@ -178,6 +184,10 @@ def initialize_database(conn):
             "CREATE INDEX IF NOT EXISTS idx_jira_issues_status "
             "ON jira_issues(status);"
         )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_jira_issues_severity "
+            "ON jira_issues(severity);"
+        )
 
         cur.execute("""
         CREATE OR REPLACE VIEW vw_security_jira_issues AS
@@ -199,6 +209,7 @@ def initialize_database(conn):
             origin,
             cross_functional_team,
             seccon,
+            severity,
             security_level,
             jira_created_at,
             jira_updated_at,
