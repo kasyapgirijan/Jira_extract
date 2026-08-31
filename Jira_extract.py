@@ -77,6 +77,7 @@ def main():
         "seccon": "SecCon",
         "severity": "Severity",
         "security_scan_type": "Security Scan Type",
+        "security_cvss": "Security CVSS",
         "issue_url": "Issue URL",
     })
 
