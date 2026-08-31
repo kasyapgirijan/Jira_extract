@@ -23,12 +23,7 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-    client = JiraClient(
-        cfg["email"],
-        cfg["token"],
-        cfg["cloud_id"],
-        cfg["site_url"],
-    )
+    client = JiraClient(cfg["email"], cfg["token"], cfg["cloud_id"], cfg["site_url"])
 
     user = client.test_auth()
     print("Authentication successful")
@@ -81,14 +76,13 @@ def main():
         "cross_functional_team": "Cross Functional Team",
         "seccon": "SecCon",
         "severity": "Severity",
+        "security_scan_type": "Security Scan Type",
         "issue_url": "Issue URL",
     })
 
     for column in ("Created", "Updated"):
         if column in df.columns:
-            df[column] = pd.to_datetime(
-                df[column], errors="coerce", utc=True
-            ).dt.tz_localize(None)
+            df[column] = pd.to_datetime(df[column], errors="coerce", utc=True).dt.tz_localize(None)
 
     df.to_excel(args.xlsx, index=False, engine="openpyxl")
     df.to_csv(args.csv, index=False, encoding="utf-8-sig")
