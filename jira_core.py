@@ -62,15 +62,12 @@ def add_incremental_clause(base_jql, since):
 
     jira_time = since.strftime("%Y-%m-%d %H:%M")
     text = base_jql.strip()
-
-    # Keep ORDER BY at the end if query.jql gets one later.
     lower = text.lower()
     pos = lower.rfind("order by ")
     if pos >= 0:
         body = text[:pos].rstrip()
         order = text[pos:].strip()
         return f'{body}\nAND updated >= "{jira_time}"\n{order}'
-
     return f'{text}\nAND updated >= "{jira_time}"\nORDER BY updated ASC'
 
 
@@ -110,20 +107,14 @@ class JiraClient:
 
         raw = f"{email}:{token}".encode("utf-8")
         encoded = base64.b64encode(raw).decode("utf-8")
-
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Basic {encoded}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         })
-
         retry = Retry(
-            total=6,
-            connect=6,
-            read=6,
-            status=6,
-            backoff_factor=1.5,
+            total=6, connect=6, read=6, status=6, backoff_factor=1.5,
             status_forcelist=(429, 500, 502, 503, 504),
             allowed_methods=frozenset({"GET", "POST"}),
             respect_retry_after_header=True,
@@ -133,18 +124,12 @@ class JiraClient:
         self.session.mount("https://", adapter)
 
     def test_auth(self):
-        response = self.session.get(
-            f"{self.base_url}/rest/api/3/myself",
-            timeout=(15, 60),
-        )
+        response = self.session.get(f"{self.base_url}/rest/api/3/myself", timeout=(15, 60))
         self._raise_for_jira(response, "Authentication test")
         return response.json()
 
     def get_fields(self):
-        response = self.session.get(
-            f"{self.base_url}/rest/api/3/field",
-            timeout=(15, 60),
-        )
+        response = self.session.get(f"{self.base_url}/rest/api/3/field", timeout=(15, 60))
         self._raise_for_jira(response, "Field discovery")
         return response.json()
 
@@ -170,30 +155,17 @@ class JiraClient:
         next_page_token = None
         page_number = 1
         total = 0
-
         while True:
-            payload = {
-                "jql": jql.strip(),
-                "fields": requested_fields,
-                "maxResults": page_size,
-            }
+            payload = {"jql": jql.strip(), "fields": requested_fields, "maxResults": page_size}
             if next_page_token:
                 payload["nextPageToken"] = next_page_token
-
-            response = self.session.post(
-                url,
-                json=payload,
-                timeout=(15, 180),
-            )
+            response = self.session.post(url, json=payload, timeout=(15, 180))
             self._raise_for_jira(response, f"JQL search page {page_number}")
-
             data = response.json()
             issues = data.get("issues", [])
             total += len(issues)
             print(f"Page {page_number}: received {len(issues)} | total {total}")
-
             yield page_number, issues
-
             next_page_token = data.get("nextPageToken")
             if not next_page_token:
                 break
@@ -204,9 +176,7 @@ class JiraClient:
         if response.ok:
             return
         detail = response.text[:4000]
-        raise RuntimeError(
-            f"{operation} failed: HTTP {response.status_code}\n{detail}"
-        )
+        raise RuntimeError(f"{operation} failed: HTTP {response.status_code}\n{detail}")
 
 
 def discover_fields(client):
@@ -215,17 +185,12 @@ def discover_fields(client):
 
     origin = client.resolve_field(fmap, "Origin")
     cross_team = client.resolve_field(fmap, "Cross Functional Team")
-    seccon = client.resolve_field(
+    seccon = client.resolve_field(fmap, "Security SecCon", "SecCon", "Security Seccon")
+    severity = client.resolve_field(fmap, "Severity", "Security Severity", "Custom field (Severity)")
+    security_scan_type = client.resolve_field(
         fmap,
-        "Security SecCon",
-        "SecCon",
-        "Security Seccon",
-    )
-    severity = client.resolve_field(
-        fmap,
-        "Severity",
-        "Security Severity",
-        "Custom field (Severity)",
+        "Security Scan Type",
+        "Custom field (Security Scan Type)",
     )
 
     print("Discovered Jira field IDs:")
@@ -233,6 +198,7 @@ def discover_fields(client):
     print("  Cross Functional Team:", cross_team)
     print("  Security SecCon:", seccon)
     print("  Severity:", severity)
+    print("  Security Scan Type:", security_scan_type)
 
     if not origin:
         raise RuntimeError("Required Jira field 'Origin' was not found")
@@ -240,38 +206,28 @@ def discover_fields(client):
         raise RuntimeError("Required Jira field 'Cross Functional Team' was not found")
     if not severity:
         print("WARNING: Jira field 'Severity' was not found; severity will be blank.")
+    if not security_scan_type:
+        print("WARNING: Jira field 'Security Scan Type' was not found; security_scan_type will be blank.")
 
     return {
         "origin": origin,
         "cross_team": cross_team,
         "seccon": seccon,
         "severity": severity,
+        "security_scan_type": security_scan_type,
     }
 
 
 def requested_fields(custom_fields):
     fields = [
-        "summary",
-        "issuetype",
-        "status",
-        "project",
-        "priority",
-        "resolution",
-        "assignee",
-        "reporter",
-        "creator",
-        "created",
-        "updated",
-        "versions",
-        "fixVersions",
-        "watches",
-        "security",
+        "summary", "issuetype", "status", "project", "priority", "resolution",
+        "assignee", "reporter", "creator", "created", "updated", "versions",
+        "fixVersions", "watches", "security",
     ]
     for field_id in (
-        custom_fields.get("origin"),
-        custom_fields.get("cross_team"),
-        custom_fields.get("seccon"),
-        custom_fields.get("severity"),
+        custom_fields.get("origin"), custom_fields.get("cross_team"),
+        custom_fields.get("seccon"), custom_fields.get("severity"),
+        custom_fields.get("security_scan_type"),
     ):
         if field_id and field_id not in fields:
             fields.append(field_id)
@@ -314,15 +270,11 @@ def issue_to_record(issue, site_url, custom_fields):
         "security_level": security.get("name"),
         "origin": jira_value(fields.get(custom_fields.get("origin"))),
         "cross_functional_team": jira_value(fields.get(custom_fields.get("cross_team"))),
-        "seccon": (
-            jira_value(fields.get(custom_fields.get("seccon")))
-            if custom_fields.get("seccon")
-            else None
-        ),
-        "severity": (
-            jira_value(fields.get(custom_fields.get("severity")))
-            if custom_fields.get("severity")
-            else None
+        "seccon": jira_value(fields.get(custom_fields.get("seccon"))) if custom_fields.get("seccon") else None,
+        "severity": jira_value(fields.get(custom_fields.get("severity"))) if custom_fields.get("severity") else None,
+        "security_scan_type": (
+            jira_value(fields.get(custom_fields.get("security_scan_type")))
+            if custom_fields.get("security_scan_type") else None
         ),
         "issue_url": f"{site_url.rstrip('/')}/browse/{issue.get('key')}",
         "raw_json": json.dumps(issue, ensure_ascii=False),
