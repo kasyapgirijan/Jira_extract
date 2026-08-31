@@ -136,8 +136,12 @@ def initialize_database(conn):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_severity ON jira_issues(severity);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_scan_type ON jira_issues(security_scan_type);")
 
+        # PostgreSQL cannot use CREATE OR REPLACE VIEW when the existing column
+        # positions/names change (for example after inserting security_scan_type
+        # before security_level). Recreate the reporting view safely instead.
+        cur.execute("DROP VIEW IF EXISTS vw_security_jira_issues;")
         cur.execute("""
-        CREATE OR REPLACE VIEW vw_security_jira_issues AS
+        CREATE VIEW vw_security_jira_issues AS
         SELECT
             issue_id, issue_key, summary, issue_type, status, status_category,
             project_key, project_name, project_type, priority, resolution,
