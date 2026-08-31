@@ -87,6 +87,17 @@ def jira_value(value):
     return str(value)
 
 
+def jira_number(value):
+    """Normalize a Jira numeric custom field to float, returning None when blank/non-numeric."""
+    normalized = jira_value(value)
+    if normalized in (None, ""):
+        return None
+    try:
+        return float(normalized)
+    except (TypeError, ValueError):
+        return None
+
+
 def version_names(values):
     if not values:
         return None
@@ -192,6 +203,12 @@ def discover_fields(client):
         "Security Scan Type",
         "Custom field (Security Scan Type)",
     )
+    security_cvss = client.resolve_field(
+        fmap,
+        "Security CVSS",
+        "CVSS",
+        "Custom field (Security CVSS)",
+    )
 
     print("Discovered Jira field IDs:")
     print("  Origin:", origin)
@@ -199,6 +216,7 @@ def discover_fields(client):
     print("  Security SecCon:", seccon)
     print("  Severity:", severity)
     print("  Security Scan Type:", security_scan_type)
+    print("  Security CVSS:", security_cvss)
 
     if not origin:
         raise RuntimeError("Required Jira field 'Origin' was not found")
@@ -208,6 +226,8 @@ def discover_fields(client):
         print("WARNING: Jira field 'Severity' was not found; severity will be blank.")
     if not security_scan_type:
         print("WARNING: Jira field 'Security Scan Type' was not found; security_scan_type will be blank.")
+    if not security_cvss:
+        print("WARNING: Jira field 'Security CVSS' was not found; security_cvss will be blank.")
 
     return {
         "origin": origin,
@@ -215,6 +235,7 @@ def discover_fields(client):
         "seccon": seccon,
         "severity": severity,
         "security_scan_type": security_scan_type,
+        "security_cvss": security_cvss,
     }
 
 
@@ -227,7 +248,7 @@ def requested_fields(custom_fields):
     for field_id in (
         custom_fields.get("origin"), custom_fields.get("cross_team"),
         custom_fields.get("seccon"), custom_fields.get("severity"),
-        custom_fields.get("security_scan_type"),
+        custom_fields.get("security_scan_type"), custom_fields.get("security_cvss"),
     ):
         if field_id and field_id not in fields:
             fields.append(field_id)
@@ -275,6 +296,10 @@ def issue_to_record(issue, site_url, custom_fields):
         "security_scan_type": (
             jira_value(fields.get(custom_fields.get("security_scan_type")))
             if custom_fields.get("security_scan_type") else None
+        ),
+        "security_cvss": (
+            jira_number(fields.get(custom_fields.get("security_cvss")))
+            if custom_fields.get("security_cvss") else None
         ),
         "issue_url": f"{site_url.rstrip('/')}/browse/{issue.get('key')}",
         "raw_json": json.dumps(issue, ensure_ascii=False),
