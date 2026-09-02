@@ -19,18 +19,19 @@ INSERT INTO jira_issues (
     issue_id, issue_key, summary, issue_type, status, status_category,
     project_key, project_name, project_type, priority, resolution,
     assignee, reporter, creator, jira_created_at, jira_updated_at,
-    affects_versions, fix_versions, watchers, security_level, origin,
-    cross_functional_team, seccon, severity, security_scan_type,
-    security_cvss, issue_url, raw_json, db_created_at, db_updated_at
+    jira_resolution_at, affects_versions, fix_versions, watchers,
+    security_level, origin, cross_functional_team, seccon, severity,
+    security_scan_type, security_cvss, issue_url, raw_json,
+    db_created_at, db_updated_at
 )
 VALUES (
     %(issue_id)s, %(issue_key)s, %(summary)s, %(issue_type)s, %(status)s,
     %(status_category)s, %(project_key)s, %(project_name)s, %(project_type)s,
     %(priority)s, %(resolution)s, %(assignee)s, %(reporter)s, %(creator)s,
-    %(jira_created_at)s, %(jira_updated_at)s, %(affects_versions)s,
-    %(fix_versions)s, %(watchers)s, %(security_level)s, %(origin)s,
-    %(cross_functional_team)s, %(seccon)s, %(severity)s,
-    %(security_scan_type)s, %(security_cvss)s, %(issue_url)s,
+    %(jira_created_at)s, %(jira_updated_at)s, %(jira_resolution_at)s,
+    %(affects_versions)s, %(fix_versions)s, %(watchers)s,
+    %(security_level)s, %(origin)s, %(cross_functional_team)s, %(seccon)s,
+    %(severity)s, %(security_scan_type)s, %(security_cvss)s, %(issue_url)s,
     %(raw_json)s::jsonb, NOW(), NOW()
 )
 ON CONFLICT (issue_id)
@@ -50,6 +51,7 @@ DO UPDATE SET
     creator = EXCLUDED.creator,
     jira_created_at = EXCLUDED.jira_created_at,
     jira_updated_at = EXCLUDED.jira_updated_at,
+    jira_resolution_at = EXCLUDED.jira_resolution_at,
     affects_versions = EXCLUDED.affects_versions,
     fix_versions = EXCLUDED.fix_versions,
     watchers = EXCLUDED.watchers,
@@ -65,6 +67,7 @@ DO UPDATE SET
     db_updated_at = NOW()
 WHERE jira_issues.jira_updated_at IS DISTINCT FROM EXCLUDED.jira_updated_at
    OR jira_issues.raw_json IS DISTINCT FROM EXCLUDED.raw_json
+   OR jira_issues.jira_resolution_at IS DISTINCT FROM EXCLUDED.jira_resolution_at
    OR jira_issues.severity IS DISTINCT FROM EXCLUDED.severity
    OR jira_issues.security_scan_type IS DISTINCT FROM EXCLUDED.security_scan_type
    OR jira_issues.security_cvss IS DISTINCT FROM EXCLUDED.security_cvss;
@@ -99,6 +102,7 @@ def initialize_database(conn):
             creator TEXT,
             jira_created_at TIMESTAMPTZ,
             jira_updated_at TIMESTAMPTZ,
+            jira_resolution_at TIMESTAMPTZ,
             affects_versions TEXT,
             fix_versions TEXT,
             watchers INTEGER,
@@ -123,6 +127,7 @@ def initialize_database(conn):
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS severity TEXT;")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS security_scan_type TEXT;")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS security_cvss NUMERIC(4,1);")
+        cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS jira_resolution_at TIMESTAMPTZ;")
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS jira_sync_state (
@@ -136,6 +141,7 @@ def initialize_database(conn):
         """)
 
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_updated ON jira_issues(jira_updated_at);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_resolution_at ON jira_issues(jira_resolution_at);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_project ON jira_issues(project_key);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_status ON jira_issues(status);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_severity ON jira_issues(severity);")
@@ -151,8 +157,9 @@ def initialize_database(conn):
             project_key, project_name, project_type, priority, resolution,
             assignee, reporter, creator, origin, cross_functional_team,
             seccon, severity, security_scan_type, security_cvss, security_level,
-            jira_created_at, jira_updated_at, affects_versions, fix_versions,
-            watchers, issue_url, db_created_at, db_updated_at
+            jira_created_at, jira_updated_at, jira_resolution_at,
+            affects_versions, fix_versions, watchers, issue_url,
+            db_created_at, db_updated_at
         FROM jira_issues;
         """)
     conn.commit()
