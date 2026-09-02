@@ -68,6 +68,7 @@ def main():
         "creator": "Creator",
         "jira_created_at": "Created",
         "jira_updated_at": "Updated",
+        "jira_resolution_at": "Resolution Date",
         "affects_versions": "Affects versions",
         "fix_versions": "Fix versions",
         "watchers": "Watchers",
@@ -81,7 +82,7 @@ def main():
         "issue_url": "Issue URL",
     })
 
-    for column in ("Created", "Updated"):
+    for column in ("Created", "Updated", "Resolution Date"):
         if column in df.columns:
             df[column] = pd.to_datetime(df[column], errors="coerce", utc=True).dt.tz_localize(None)
 
