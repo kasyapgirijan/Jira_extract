@@ -242,8 +242,8 @@ def discover_fields(client):
 def requested_fields(custom_fields):
     fields = [
         "summary", "issuetype", "status", "project", "priority", "resolution",
-        "assignee", "reporter", "creator", "created", "updated", "versions",
-        "fixVersions", "watches", "security",
+        "resolutiondate", "assignee", "reporter", "creator", "created", "updated",
+        "versions", "fixVersions", "watches", "security",
     ]
     for field_id in (
         custom_fields.get("origin"), custom_fields.get("cross_team"),
@@ -285,6 +285,7 @@ def issue_to_record(issue, site_url, custom_fields):
         "creator": creator.get("displayName"),
         "jira_created_at": fields.get("created"),
         "jira_updated_at": fields.get("updated"),
+        "jira_resolution_at": fields.get("resolutiondate"),
         "affects_versions": version_names(fields.get("versions")),
         "fix_versions": version_names(fields.get("fixVersions")),
         "watchers": watches.get("watchCount"),
