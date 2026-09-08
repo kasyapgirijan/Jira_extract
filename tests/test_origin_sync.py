@@ -14,6 +14,7 @@ class OriginSyncTests(unittest.TestCase):
         self.cur.fetchall.return_value = [(1,), (2,)]
         self.client = MagicMock()
         self.fields = {"origin": "customfield_1"}
+        self.client.search_pages.return_value = [(1, [self.issue(1, None), self.issue(2, None)])]
 
     def issue(self, ident, origin):
         return {"id": str(ident), "fields": {"customfield_1": origin}}
@@ -120,7 +121,7 @@ class OriginSyncTests(unittest.TestCase):
         self.run_main()
 
     def test_incremental_only_checks_updated_ids_without_origin_filter(self):
-        self.client.search_pages.return_value = [(1, [{"id": "2"}])]
+        self.client.search_pages.return_value = [(1, [self.issue(2, "Functional Testing")])]
         self.client.get_issue.return_value = self.issue(2, "Functional Testing")
         since = datetime(2026, 1, 1, 10, 55, tzinfo=timezone.utc)
         self.assertEqual(sync.reconcile_origins(self.conn, self.client, self.fields, since), 1)
@@ -141,8 +142,8 @@ class OriginSyncTests(unittest.TestCase):
     def test_incremental_batches_ids_and_reads_all_pages(self):
         self.cur.fetchall.return_value = [(i,) for i in range(1, 102)]
         self.client.search_pages.side_effect = [
-            [(1, [{"id": "1"}]), (2, [{"id": "100"}])],
-            [(1, [{"id": "101"}])],
+            [(1, [self.issue(1, None)]), (2, [self.issue(100, None)])],
+            [(1, [self.issue(101, None)])],
         ]
         self.client.get_issue.side_effect = lambda i, fields: self.issue(i, None)
         since = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -152,7 +153,7 @@ class OriginSyncTests(unittest.TestCase):
 
     def test_failed_later_search_page_does_not_delete(self):
         def pages(*args):
-            yield 1, [{"id": "1"}]
+            yield 1, [self.issue(1, None)]
             raise RuntimeError("HTTP 500")
         self.client.search_pages.side_effect = pages
         since = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -166,6 +167,37 @@ class OriginSyncTests(unittest.TestCase):
 
     def test_failed_cleanup_does_not_advance_checkpoint(self):
         self.run_main(cleanup_error=RuntimeError("Unavailable"))
+
+    def test_full_12548_security_tickets_need_no_individual_requests(self):
+        self.cur.fetchall.return_value = [(i,) for i in range(1, 12549)]
+        self.client.search_pages.side_effect = [
+            [(1, [self.issue(i, {"value": "Security Testing"})
+                  for i in range(start, min(start + 100, 12549))])]
+            for start in range(1, 12549, 100)
+        ]
+        with patch("builtins.print"):
+            self.assertEqual(sync.reconcile_origins(self.conn, self.client, self.fields), 0)
+        self.assertEqual(self.client.search_pages.call_count, 126)
+        self.client.get_issue.assert_not_called()
+        self.assertFalse(self.deletes())
+
+    def test_search_correction_reversed_before_confirmation_is_kept(self):
+        self.client.get_issue.side_effect = lambda i, fields: self.issue(i, "Security Testing")
+        self.assertEqual(sync.reconcile_origins(self.conn, self.client, self.fields), 0)
+        self.assertFalse(self.deletes())
+
+    def test_missing_full_search_ticket_is_confirmed_before_cleanup(self):
+        self.client.search_pages.return_value = [(1, [self.issue(1, "Security Testing")])]
+        self.client.get_issue.return_value = self.issue(2, "Security Testing")
+        self.assertEqual(sync.reconcile_origins(self.conn, self.client, self.fields), 0)
+        self.client.get_issue.assert_called_once_with(2, ["customfield_1"])
+        self.assertFalse(self.deletes())
+
+    def test_unknown_search_origin_aborts_without_deletion(self):
+        self.client.search_pages.return_value = [(1, [{"id": "1", "fields": {}}])]
+        with self.assertRaises(RuntimeError):
+            sync.reconcile_origins(self.conn, self.client, self.fields)
+        self.assertFalse(self.deletes())
 
 
 if __name__ == "__main__":
