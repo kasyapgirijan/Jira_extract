@@ -231,15 +231,22 @@ def reconcile_origins(conn, client, custom_fields, since=None):
     the successful checkpoint. A 403/404 or missing field aborts cleanup.
     """
     origin_field = custom_fields["origin"]
+    print("Origin cleanup: reading stored issue IDs...", flush=True)
     with conn.cursor() as cur:
         cur.execute("SELECT issue_id FROM jira_issues ORDER BY issue_id")
         issue_ids = [row[0] for row in cur.fetchall()]
+    print(f"Origin cleanup: {len(issue_ids)} stored tickets", flush=True)
 
     candidates = issue_ids
     if since is not None:
         candidates = set()
         for offset in range(0, len(issue_ids), 100):
             batch = issue_ids[offset:offset + 100]
+            print(
+                f"Origin cleanup: searching updated tickets in batch "
+                f"{offset // 100 + 1}/{(len(issue_ids) + 99) // 100}...",
+                flush=True,
+            )
             id_query = "id IN (" + ",".join(str(i) for i in batch) + ")"
             jql = add_incremental_clause(id_query, since)
             for _, issues in client.search_pages(jql, [origin_field]):
@@ -250,7 +257,9 @@ def reconcile_origins(conn, client, custom_fields, since=None):
                     candidates.add(issue_id)
 
     removed = []
-    for issue_id in sorted(candidates):
+    print(f"Origin cleanup: verifying {len(candidates)} tickets with Jira", flush=True)
+    for index, issue_id in enumerate(sorted(candidates), 1):
+        print(f"Origin cleanup: checking {index}/{len(candidates)} (ID {issue_id})...", flush=True)
         issue = client.get_issue(issue_id, [origin_field])
         fields = issue.get("fields") or {}
         if str(issue.get("id")) != str(issue_id) or origin_field not in fields:
@@ -267,6 +276,7 @@ def reconcile_origins(conn, client, custom_fields, since=None):
             raise RuntimeError(f"Unexpected Origin format for issue {issue_id}; cleanup aborted")
 
     if removed:
+        print(f"Origin cleanup: staging removal of {len(removed)} rows...", flush=True)
         with conn.cursor() as cur:
             cur.execute("DELETE FROM jira_issues WHERE issue_id = ANY(%s)", (removed,))
     return len(removed)
@@ -299,12 +309,14 @@ def main():
     fields = requested_fields(custom_fields)
     base_jql = load_jql(args.jql)
 
+    print("Connecting to PostgreSQL...", flush=True)
     with db_connect(cfg) as conn:
         # All configurations share jira_issues, so serialize runs across names.
         with conn.cursor() as cur:
             cur.execute("SELECT pg_try_advisory_lock(741920381)")
             if not cur.fetchone()[0]:
                 raise RuntimeError("Another Jira sync is already running")
+        print("Initializing database schema and reporting view...", flush=True)
         initialize_database(conn)
         rows_before = table_row_count(conn)
         last_sync = get_last_sync(conn, sync_name)
@@ -329,10 +341,13 @@ def main():
 
         processed = 0
         try:
-            for _, issues in client.search_pages(jql, fields):
+            for page, issues in client.search_pages(jql, fields):
+                print(f"Database: writing Jira page {page} ({len(issues)} tickets)...", flush=True)
                 processed += upsert_page(conn, issues, cfg, custom_fields)
+                print(f"Database: page {page} committed", flush=True)
 
             removed = reconcile_origins(conn, client, custom_fields, since)
+            print("Committing cleanup and successful-sync checkpoint...", flush=True)
             save_success(conn, sync_name, started_at, processed)
             print("\nSync successful")
             print("Processed this run:", processed)
