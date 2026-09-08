@@ -141,15 +141,19 @@ The default overlap is five minutes and can be changed in `config.ini`.
 
 Each hourly run also searches stored Jira IDs using the same `updated` window,
 without the Origin, project, team or issue-type filters. It then reads the
-current Origin of those updated tickets by Jira ID. A ticket whose Origin was corrected away from `Security Testing`
+Origin of those updated tickets in batches. A ticket whose Origin was corrected away from `Security Testing`
 (including a cleared Origin) is removed from `jira_issues` and therefore from
 `vw_security_jira_issues`. Assignee changes alone do not remove a ticket.
 Run `--full` once after upgrading to repair corrections older than the saved
 checkpoint; full runs recheck every stored ID.
 
-Incremental cleanup searches stored IDs in batches of 100 and requires one
-additional issue lookup per updated stored ticket. Full cleanup requires one
-lookup per stored ticket. JQL timestamps use the authenticated Jira user's
+Both modes search stored IDs in batches of 100; incremental mode includes the
+updated window, while full mode checks all stored IDs. Individual issue reads
+are only needed to confirm potential removals, or to verify IDs missing from a
+full search. For 12,548 unchanged Security Testing tickets, full cleanup uses
+126 search requests (assuming 100 results per page), instead of 12,548 individual
+reads. Progress messages show batches, confirmations, database writes and commits.
+JQL timestamps use the authenticated Jira user's
 timezone (install the updated requirements, including `tzdata`, on Windows).
 All checks must succeed before any cleanup is applied. Missing Origin fields,
 permission errors, missing issues and API failures abort cleanup and leave the
