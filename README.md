@@ -17,7 +17,7 @@ The refactored code now has **one Jira client and one JQL file shared by both ou
 ## Structure
 
 - `jira_core.py` — authentication, retries, Jira field discovery, pagination and record normalization
-- `query.jql` — the single source of truth for the Jira business query
+- `query.jql` — local, Git-ignored business query on the sync host (not shipped in the repository)
 - `Jira_extract.py` — Excel/CSV exporter built on `jira_core.py`
 - `jira_postgres_sync.py` — PostgreSQL full/incremental sync built on the same core
 - `config.example.ini` — configuration template
@@ -53,6 +53,16 @@ Create the local configuration:
 ```powershell
 Copy-Item config.example.ini config.ini
 ```
+
+Place your server's business query in `query.jql` alongside the configuration,
+or use `--jql` / `JIRA_JQL_FILE` to point to its local path. Both scripts read
+that file; no query is bundled with new checkouts. Keep the Origin condition
+`origin = "Security Testing"`: PostgreSQL cleanup uses that scope.
+
+**Existing installations:** back up your local `query.jql` outside the checkout
+before pulling the commit that untracks it, then restore it or point
+`JIRA_JQL_FILE` to the backup. Git may remove the previously tracked file during
+that update. Subsequent edits to the restored file remain local.
 
 Edit `config.ini` with your Jira and PostgreSQL settings, including the scoped Jira API token:
 
@@ -128,6 +138,28 @@ ORDER BY updated ASC
 ```
 
 The default overlap is five minutes and can be changed in `config.ini`.
+
+Each hourly run also searches stored Jira IDs using the same `updated` window,
+without the Origin, project, team or issue-type filters. It then reads the
+current Origin of those updated tickets by Jira ID. A ticket whose Origin was corrected away from `Security Testing`
+(including a cleared Origin) is removed from `jira_issues` and therefore from
+`vw_security_jira_issues`. Assignee changes alone do not remove a ticket.
+Run `--full` once after upgrading to repair corrections older than the saved
+checkpoint; full runs recheck every stored ID.
+
+Incremental cleanup searches stored IDs in batches of 100 and requires one
+additional issue lookup per updated stored ticket. Full cleanup requires one
+lookup per stored ticket. JQL timestamps use the authenticated Jira user's
+timezone (install the updated requirements, including `tzdata`, on Windows).
+All checks must succeed before any cleanup is applied. Missing Origin fields,
+permission errors, missing issues and API failures abort cleanup and leave the
+checkpoint unchanged. Deletions and the success checkpoint commit together;
+page upserts already committed remain safe to replay. Concurrent sync runs
+against this database are rejected using a PostgreSQL advisory lock.
+
+An empty full search is allowed: stored issues are still checked individually.
+Cleanup currently covers Origin corrections only, not changes to project,
+issue type or Cross Functional Team, deleted tickets, or lost Jira visibility.
 
 A full load is automatically selected if `jira_issues` is empty or there is no successful checkpoint. You can always override with `--full`.
 

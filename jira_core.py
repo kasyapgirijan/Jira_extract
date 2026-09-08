@@ -144,6 +144,16 @@ class JiraClient:
         self._raise_for_jira(response, "Field discovery")
         return response.json()
 
+    def get_issue(self, issue_id, fields):
+        response = self.session.get(
+            f"{self.base_url}/rest/api/3/issue/{int(issue_id)}",
+            params={"fields": ",".join(fields)}, timeout=(15, 60),
+        )
+        # A missing issue can also mean lost visibility; never treat it as
+        # evidence that its Origin changed.
+        self._raise_for_jira(response, f"Read issue {issue_id}")
+        return response.json()
+
     @staticmethod
     def field_map(fields):
         result = {}
