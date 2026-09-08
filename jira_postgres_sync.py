@@ -1,5 +1,6 @@
 import argparse
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 import psycopg
 
@@ -221,6 +222,56 @@ def upsert_page(conn, issues, cfg, custom_fields):
     return len(records)
 
 
+def reconcile_origins(conn, client, custom_fields, since=None):
+    """Remove confirmed Origin corrections, including old missed corrections.
+
+    Incremental runs search stored IDs updated since the checkpoint, without
+    the business filters that would hide corrected tickets. Full runs check all.
+    Stage deletions until every lookup succeeds; the caller commits them with
+    the successful checkpoint. A 403/404 or missing field aborts cleanup.
+    """
+    origin_field = custom_fields["origin"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT issue_id FROM jira_issues ORDER BY issue_id")
+        issue_ids = [row[0] for row in cur.fetchall()]
+
+    candidates = issue_ids
+    if since is not None:
+        candidates = set()
+        for offset in range(0, len(issue_ids), 100):
+            batch = issue_ids[offset:offset + 100]
+            id_query = "id IN (" + ",".join(str(i) for i in batch) + ")"
+            jql = add_incremental_clause(id_query, since)
+            for _, issues in client.search_pages(jql, [origin_field]):
+                for issue in issues:
+                    issue_id = int(issue["id"])
+                    if issue_id not in batch:
+                        raise RuntimeError("Unexpected issue in reconciliation search")
+                    candidates.add(issue_id)
+
+    removed = []
+    for issue_id in sorted(candidates):
+        issue = client.get_issue(issue_id, [origin_field])
+        fields = issue.get("fields") or {}
+        if str(issue.get("id")) != str(issue_id) or origin_field not in fields:
+            raise RuntimeError(f"Cannot verify Origin for issue {issue_id}; cleanup aborted")
+        origin = fields[origin_field]
+        if isinstance(origin, dict) and isinstance(origin.get("value"), str):
+            origin = origin["value"]
+        if origin is None or (isinstance(origin, str) and not origin.strip()):
+            removed.append(issue_id)
+        elif isinstance(origin, str):
+            if origin.strip().casefold() != "security testing":
+                removed.append(issue_id)
+        else:
+            raise RuntimeError(f"Unexpected Origin format for issue {issue_id}; cleanup aborted")
+
+    if removed:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM jira_issues WHERE issue_id = ANY(%s)", (removed,))
+    return len(removed)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Sync Jira issues into PostgreSQL.")
     parser.add_argument("--config", help="Path to config.ini")
@@ -241,22 +292,30 @@ def main():
     print("JIRA -> POSTGRES SYNC")
     user = client.test_auth()
     print("Authenticated as:", user.get("displayName"))
+    # JQL date literals use the authenticated Jira user's timezone.
+    jira_timezone = ZoneInfo(user["timeZone"])
 
     custom_fields = discover_fields(client)
     fields = requested_fields(custom_fields)
     base_jql = load_jql(args.jql)
 
     with db_connect(cfg) as conn:
+        # All configurations share jira_issues, so serialize runs across names.
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(741920381)")
+            if not cur.fetchone()[0]:
+                raise RuntimeError("Another Jira sync is already running")
         initialize_database(conn)
         rows_before = table_row_count(conn)
         last_sync = get_last_sync(conn, sync_name)
         full_load = args.full or rows_before == 0 or last_sync is None
+        since = None
 
         if full_load:
             jql = base_jql
             print("Mode: FULL baseline load")
         else:
-            since = last_sync - timedelta(minutes=overlap)
+            since = (last_sync - timedelta(minutes=overlap)).astimezone(jira_timezone)
             jql = add_incremental_clause(base_jql, since)
             print("Mode: incremental")
             print("Last successful sync:", last_sync)
@@ -273,17 +332,15 @@ def main():
             for _, issues in client.search_pages(jql, fields):
                 processed += upsert_page(conn, issues, cfg, custom_fields)
 
-            if full_load and processed == 0:
-                raise RuntimeError(
-                    "Full baseline Jira query returned 0 issues. No checkpoint was advanced."
-                )
-
+            removed = reconcile_origins(conn, client, custom_fields, since)
             save_success(conn, sync_name, started_at, processed)
             print("\nSync successful")
             print("Processed this run:", processed)
+            print("Removed after Origin correction:", removed)
             print("Database rows after sync:", table_row_count(conn))
 
         except Exception as error:
+            conn.rollback()
             try:
                 save_failure(conn, sync_name, error)
             except Exception:
