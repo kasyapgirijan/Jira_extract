@@ -222,6 +222,20 @@ def upsert_page(conn, issues, cfg, custom_fields):
     return len(records)
 
 
+def has_security_origin(issue, issue_id, origin_field):
+    fields = issue.get("fields") or {}
+    if str(issue.get("id")) != str(issue_id) or origin_field not in fields:
+        raise RuntimeError(f"Cannot verify Origin for issue {issue_id}; cleanup aborted")
+    origin = fields[origin_field]
+    if isinstance(origin, dict) and isinstance(origin.get("value"), str):
+        origin = origin["value"]
+    if origin is None:
+        return False
+    if isinstance(origin, str):
+        return origin.strip().casefold() == "security testing"
+    raise RuntimeError(f"Unexpected Origin format for issue {issue_id}; cleanup aborted")
+
+
 def reconcile_origins(conn, client, custom_fields, since=None):
     """Remove confirmed Origin corrections, including old missed corrections.
 
@@ -237,43 +251,37 @@ def reconcile_origins(conn, client, custom_fields, since=None):
         issue_ids = [row[0] for row in cur.fetchall()]
     print(f"Origin cleanup: {len(issue_ids)} stored tickets", flush=True)
 
-    candidates = issue_ids
-    if since is not None:
-        candidates = set()
-        for offset in range(0, len(issue_ids), 100):
-            batch = issue_ids[offset:offset + 100]
-            print(
-                f"Origin cleanup: searching updated tickets in batch "
-                f"{offset // 100 + 1}/{(len(issue_ids) + 99) // 100}...",
-                flush=True,
-            )
-            id_query = "id IN (" + ",".join(str(i) for i in batch) + ")"
-            jql = add_incremental_clause(id_query, since)
-            for _, issues in client.search_pages(jql, [origin_field]):
-                for issue in issues:
-                    issue_id = int(issue["id"])
-                    if issue_id not in batch:
-                        raise RuntimeError("Unexpected issue in reconciliation search")
+    candidates = set()
+    for offset in range(0, len(issue_ids), 100):
+        batch = issue_ids[offset:offset + 100]
+        print(
+            f"Origin cleanup: searching batch "
+            f"{offset // 100 + 1}/{(len(issue_ids) + 99) // 100}...",
+            flush=True,
+        )
+        id_query = "id IN (" + ",".join(str(i) for i in batch) + ")"
+        jql = add_incremental_clause(id_query, since)
+        seen = set()
+        for _, issues in client.search_pages(jql, [origin_field]):
+            for issue in issues:
+                issue_id = int(issue["id"])
+                if issue_id not in batch:
+                    raise RuntimeError("Unexpected issue in reconciliation search")
+                seen.add(issue_id)
+                if not has_security_origin(issue, issue_id, origin_field):
                     candidates.add(issue_id)
+        if since is None:
+            # Search may lag or hide an issue. Verify missing IDs directly;
+            # absence from search is never sufficient evidence for deletion.
+            candidates.update(set(batch) - seen)
 
     removed = []
-    print(f"Origin cleanup: verifying {len(candidates)} tickets with Jira", flush=True)
+    print(f"Origin cleanup: verifying {len(candidates)} possible removals with Jira", flush=True)
     for index, issue_id in enumerate(sorted(candidates), 1):
         print(f"Origin cleanup: checking {index}/{len(candidates)} (ID {issue_id})...", flush=True)
         issue = client.get_issue(issue_id, [origin_field])
-        fields = issue.get("fields") or {}
-        if str(issue.get("id")) != str(issue_id) or origin_field not in fields:
-            raise RuntimeError(f"Cannot verify Origin for issue {issue_id}; cleanup aborted")
-        origin = fields[origin_field]
-        if isinstance(origin, dict) and isinstance(origin.get("value"), str):
-            origin = origin["value"]
-        if origin is None or (isinstance(origin, str) and not origin.strip()):
+        if not has_security_origin(issue, issue_id, origin_field):
             removed.append(issue_id)
-        elif isinstance(origin, str):
-            if origin.strip().casefold() != "security testing":
-                removed.append(issue_id)
-        else:
-            raise RuntimeError(f"Unexpected Origin format for issue {issue_id}; cleanup aborted")
 
     if removed:
         print(f"Origin cleanup: staging removal of {len(removed)} rows...", flush=True)
