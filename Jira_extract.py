@@ -79,6 +79,8 @@ def main():
         "severity": "Severity",
         "security_scan_type": "Security Scan Type",
         "security_cvss": "Security CVSS",
+        "security_status_next_version": "Security Status - Next Version",
+        "security_backlog_jira_id": "Security Backlog Jira ID",
         "issue_url": "Issue URL",
     })
 
