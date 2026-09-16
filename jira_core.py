@@ -149,8 +149,6 @@ class JiraClient:
             f"{self.base_url}/rest/api/3/issue/{int(issue_id)}",
             params={"fields": ",".join(fields)}, timeout=(15, 60),
         )
-        # A missing issue can also mean lost visibility; never treat it as
-        # evidence that its Origin changed.
         self._raise_for_jira(response, f"Read issue {issue_id}")
         return response.json()
 
@@ -219,6 +217,16 @@ def discover_fields(client):
         "CVSS",
         "Custom field (Security CVSS)",
     )
+    security_status_next_version = client.resolve_field(
+        fmap,
+        "Security Status - Next Version",
+        "Custom field (Security Status - Next Version)",
+    )
+    security_backlog_jira_id = client.resolve_field(
+        fmap,
+        "Security Backlog Jira ID",
+        "Custom field (Security Backlog Jira ID)",
+    )
 
     print("Discovered Jira field IDs:")
     print("  Origin:", origin)
@@ -227,6 +235,8 @@ def discover_fields(client):
     print("  Severity:", severity)
     print("  Security Scan Type:", security_scan_type)
     print("  Security CVSS:", security_cvss)
+    print("  Security Status - Next Version:", security_status_next_version)
+    print("  Security Backlog Jira ID:", security_backlog_jira_id)
 
     if not origin:
         raise RuntimeError("Required Jira field 'Origin' was not found")
@@ -238,6 +248,10 @@ def discover_fields(client):
         print("WARNING: Jira field 'Security Scan Type' was not found; security_scan_type will be blank.")
     if not security_cvss:
         print("WARNING: Jira field 'Security CVSS' was not found; security_cvss will be blank.")
+    if not security_status_next_version:
+        print("WARNING: Jira field 'Security Status - Next Version' was not found; value will be blank.")
+    if not security_backlog_jira_id:
+        print("WARNING: Jira field 'Security Backlog Jira ID' was not found; value will be blank.")
 
     return {
         "origin": origin,
@@ -246,6 +260,8 @@ def discover_fields(client):
         "severity": severity,
         "security_scan_type": security_scan_type,
         "security_cvss": security_cvss,
+        "security_status_next_version": security_status_next_version,
+        "security_backlog_jira_id": security_backlog_jira_id,
     }
 
 
@@ -259,6 +275,8 @@ def requested_fields(custom_fields):
         custom_fields.get("origin"), custom_fields.get("cross_team"),
         custom_fields.get("seccon"), custom_fields.get("severity"),
         custom_fields.get("security_scan_type"), custom_fields.get("security_cvss"),
+        custom_fields.get("security_status_next_version"),
+        custom_fields.get("security_backlog_jira_id"),
     ):
         if field_id and field_id not in fields:
             fields.append(field_id)
@@ -311,6 +329,14 @@ def issue_to_record(issue, site_url, custom_fields):
         "security_cvss": (
             jira_number(fields.get(custom_fields.get("security_cvss")))
             if custom_fields.get("security_cvss") else None
+        ),
+        "security_status_next_version": (
+            jira_value(fields.get(custom_fields.get("security_status_next_version")))
+            if custom_fields.get("security_status_next_version") else None
+        ),
+        "security_backlog_jira_id": (
+            jira_value(fields.get(custom_fields.get("security_backlog_jira_id")))
+            if custom_fields.get("security_backlog_jira_id") else None
         ),
         "issue_url": f"{site_url.rstrip('/')}/browse/{issue.get('key')}",
         "raw_json": json.dumps(issue, ensure_ascii=False),
