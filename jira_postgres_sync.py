@@ -22,8 +22,8 @@ INSERT INTO jira_issues (
     assignee, reporter, creator, jira_created_at, jira_updated_at,
     jira_resolution_at, affects_versions, fix_versions, watchers,
     security_level, origin, cross_functional_team, seccon, severity,
-    security_scan_type, security_cvss, issue_url, raw_json,
-    db_created_at, db_updated_at
+    security_scan_type, security_cvss, security_status_next_version,
+    security_backlog_jira_id, issue_url, raw_json, db_created_at, db_updated_at
 )
 VALUES (
     %(issue_id)s, %(issue_key)s, %(summary)s, %(issue_type)s, %(status)s,
@@ -32,8 +32,9 @@ VALUES (
     %(jira_created_at)s, %(jira_updated_at)s, %(jira_resolution_at)s,
     %(affects_versions)s, %(fix_versions)s, %(watchers)s,
     %(security_level)s, %(origin)s, %(cross_functional_team)s, %(seccon)s,
-    %(severity)s, %(security_scan_type)s, %(security_cvss)s, %(issue_url)s,
-    %(raw_json)s::jsonb, NOW(), NOW()
+    %(severity)s, %(security_scan_type)s, %(security_cvss)s,
+    %(security_status_next_version)s, %(security_backlog_jira_id)s,
+    %(issue_url)s, %(raw_json)s::jsonb, NOW(), NOW()
 )
 ON CONFLICT (issue_id)
 DO UPDATE SET
@@ -63,6 +64,8 @@ DO UPDATE SET
     severity = EXCLUDED.severity,
     security_scan_type = EXCLUDED.security_scan_type,
     security_cvss = EXCLUDED.security_cvss,
+    security_status_next_version = EXCLUDED.security_status_next_version,
+    security_backlog_jira_id = EXCLUDED.security_backlog_jira_id,
     issue_url = EXCLUDED.issue_url,
     raw_json = EXCLUDED.raw_json,
     db_updated_at = NOW()
@@ -71,7 +74,9 @@ WHERE jira_issues.jira_updated_at IS DISTINCT FROM EXCLUDED.jira_updated_at
    OR jira_issues.jira_resolution_at IS DISTINCT FROM EXCLUDED.jira_resolution_at
    OR jira_issues.severity IS DISTINCT FROM EXCLUDED.severity
    OR jira_issues.security_scan_type IS DISTINCT FROM EXCLUDED.security_scan_type
-   OR jira_issues.security_cvss IS DISTINCT FROM EXCLUDED.security_cvss;
+   OR jira_issues.security_cvss IS DISTINCT FROM EXCLUDED.security_cvss
+   OR jira_issues.security_status_next_version IS DISTINCT FROM EXCLUDED.security_status_next_version
+   OR jira_issues.security_backlog_jira_id IS DISTINCT FROM EXCLUDED.security_backlog_jira_id;
 """
 
 
@@ -114,6 +119,8 @@ def initialize_database(conn):
             severity TEXT,
             security_scan_type TEXT,
             security_cvss NUMERIC(4,1),
+            security_status_next_version TEXT,
+            security_backlog_jira_id TEXT,
             issue_url TEXT,
             raw_json JSONB,
             db_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -121,7 +128,6 @@ def initialize_database(conn):
         );
         """)
 
-        # Backward-compatible migrations for databases created by older versions.
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS raw_json JSONB;")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS cross_functional_team TEXT;")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS seccon TEXT;")
@@ -129,6 +135,8 @@ def initialize_database(conn):
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS security_scan_type TEXT;")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS security_cvss NUMERIC(4,1);")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS jira_resolution_at TIMESTAMPTZ;")
+        cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS security_status_next_version TEXT;")
+        cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS security_backlog_jira_id TEXT;")
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS jira_sync_state (
@@ -148,8 +156,9 @@ def initialize_database(conn):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_severity ON jira_issues(severity);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_scan_type ON jira_issues(security_scan_type);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_cvss ON jira_issues(security_cvss);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_next_version ON jira_issues(security_status_next_version);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_backlog_id ON jira_issues(security_backlog_jira_id);")
 
-        # Recreate the view so newly added columns can be inserted safely.
         cur.execute("DROP VIEW IF EXISTS vw_security_jira_issues;")
         cur.execute("""
         CREATE VIEW vw_security_jira_issues AS
@@ -157,8 +166,9 @@ def initialize_database(conn):
             issue_id, issue_key, summary, issue_type, status, status_category,
             project_key, project_name, project_type, priority, resolution,
             assignee, reporter, creator, origin, cross_functional_team,
-            seccon, severity, security_scan_type, security_cvss, security_level,
-            jira_created_at, jira_updated_at, jira_resolution_at,
+            seccon, severity, security_scan_type, security_cvss,
+            security_status_next_version, security_backlog_jira_id,
+            security_level, jira_created_at, jira_updated_at, jira_resolution_at,
             affects_versions, fix_versions, watchers, issue_url,
             db_created_at, db_updated_at
         FROM jira_issues;
@@ -237,13 +247,6 @@ def has_security_origin(issue, issue_id, origin_field):
 
 
 def reconcile_origins(conn, client, custom_fields, since=None):
-    """Remove confirmed Origin corrections, including old missed corrections.
-
-    Incremental runs search stored IDs updated since the checkpoint, without
-    the business filters that would hide corrected tickets. Full runs check all.
-    Stage deletions until every lookup succeeds; the caller commits them with
-    the successful checkpoint. A 403/404 or missing field aborts cleanup.
-    """
     origin_field = custom_fields["origin"]
     print("Origin cleanup: reading stored issue IDs...", flush=True)
     with conn.cursor() as cur:
@@ -271,8 +274,6 @@ def reconcile_origins(conn, client, custom_fields, since=None):
                 if not has_security_origin(issue, issue_id, origin_field):
                     candidates.add(issue_id)
         if since is None:
-            # Search may lag or hide an issue. Verify missing IDs directly;
-            # absence from search is never sufficient evidence for deletion.
             candidates.update(set(batch) - seen)
 
     removed = []
@@ -310,7 +311,6 @@ def main():
     print("JIRA -> POSTGRES SYNC")
     user = client.test_auth()
     print("Authenticated as:", user.get("displayName"))
-    # JQL date literals use the authenticated Jira user's timezone.
     jira_timezone = ZoneInfo(user["timeZone"])
 
     custom_fields = discover_fields(client)
@@ -319,7 +319,6 @@ def main():
 
     print("Connecting to PostgreSQL...", flush=True)
     with db_connect(cfg) as conn:
-        # All configurations share jira_issues, so serialize runs across names.
         with conn.cursor() as cur:
             cur.execute("SELECT pg_try_advisory_lock(741920381)")
             if not cur.fetchone()[0]:
