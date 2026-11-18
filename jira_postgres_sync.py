@@ -23,7 +23,8 @@ INSERT INTO jira_issues (
     jira_resolution_at, affects_versions, fix_versions, watchers,
     security_level, origin, cross_functional_team, seccon, severity,
     security_scan_type, security_cvss, security_status_next_version,
-    security_backlog_jira_id, issue_url, raw_json, db_created_at, db_updated_at
+    security_backlog_jira_id, vulnerability_category,
+    issue_url, raw_json, db_created_at, db_updated_at
 )
 VALUES (
     %(issue_id)s, %(issue_key)s, %(summary)s, %(issue_type)s, %(status)s,
@@ -34,7 +35,7 @@ VALUES (
     %(security_level)s, %(origin)s, %(cross_functional_team)s, %(seccon)s,
     %(severity)s, %(security_scan_type)s, %(security_cvss)s,
     %(security_status_next_version)s, %(security_backlog_jira_id)s,
-    %(issue_url)s, %(raw_json)s::jsonb, NOW(), NOW()
+    %(vulnerability_category)s, %(issue_url)s, %(raw_json)s::jsonb, NOW(), NOW()
 )
 ON CONFLICT (issue_id)
 DO UPDATE SET
@@ -66,6 +67,7 @@ DO UPDATE SET
     security_cvss = EXCLUDED.security_cvss,
     security_status_next_version = EXCLUDED.security_status_next_version,
     security_backlog_jira_id = EXCLUDED.security_backlog_jira_id,
+    vulnerability_category = EXCLUDED.vulnerability_category,
     issue_url = EXCLUDED.issue_url,
     raw_json = EXCLUDED.raw_json,
     db_updated_at = NOW()
@@ -76,7 +78,8 @@ WHERE jira_issues.jira_updated_at IS DISTINCT FROM EXCLUDED.jira_updated_at
    OR jira_issues.security_scan_type IS DISTINCT FROM EXCLUDED.security_scan_type
    OR jira_issues.security_cvss IS DISTINCT FROM EXCLUDED.security_cvss
    OR jira_issues.security_status_next_version IS DISTINCT FROM EXCLUDED.security_status_next_version
-   OR jira_issues.security_backlog_jira_id IS DISTINCT FROM EXCLUDED.security_backlog_jira_id;
+   OR jira_issues.security_backlog_jira_id IS DISTINCT FROM EXCLUDED.security_backlog_jira_id
+   OR jira_issues.vulnerability_category IS DISTINCT FROM EXCLUDED.vulnerability_category;
 """
 
 
@@ -121,6 +124,7 @@ def initialize_database(conn):
             security_cvss NUMERIC(4,1),
             security_status_next_version TEXT,
             security_backlog_jira_id TEXT,
+            vulnerability_category TEXT,
             issue_url TEXT,
             raw_json JSONB,
             db_created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -137,6 +141,7 @@ def initialize_database(conn):
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS jira_resolution_at TIMESTAMPTZ;")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS security_status_next_version TEXT;")
         cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS security_backlog_jira_id TEXT;")
+        cur.execute("ALTER TABLE jira_issues ADD COLUMN IF NOT EXISTS vulnerability_category TEXT;")
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS jira_sync_state (
@@ -158,6 +163,7 @@ def initialize_database(conn):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_cvss ON jira_issues(security_cvss);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_next_version ON jira_issues(security_status_next_version);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_backlog_id ON jira_issues(security_backlog_jira_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_jira_issues_vuln_category ON jira_issues(vulnerability_category);")
 
         cur.execute("DROP VIEW IF EXISTS vw_security_jira_issues;")
         cur.execute("""
@@ -168,7 +174,7 @@ def initialize_database(conn):
             assignee, reporter, creator, origin, cross_functional_team,
             seccon, severity, security_scan_type, security_cvss,
             security_status_next_version, security_backlog_jira_id,
-            security_level, jira_created_at, jira_updated_at, jira_resolution_at,
+            vulnerability_category, security_level, jira_created_at, jira_updated_at, jira_resolution_at,
             affects_versions, fix_versions, watchers, issue_url,
             db_created_at, db_updated_at
         FROM jira_issues;
