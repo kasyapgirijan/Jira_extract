@@ -228,6 +228,12 @@ def discover_fields(client):
         "Custom field (Security Backlog Jira ID)",
     )
 
+    vulnerability_category = client.resolve_field(
+        fmap,
+        "Vulnerability Category",
+        "Custom field (Vulnerability Category)",
+    )
+
     print("Discovered Jira field IDs:")
     print("  Origin:", origin)
     print("  Cross Functional Team:", cross_team)
@@ -237,6 +243,7 @@ def discover_fields(client):
     print("  Security CVSS:", security_cvss)
     print("  Security Status - Next Version:", security_status_next_version)
     print("  Security Backlog Jira ID:", security_backlog_jira_id)
+    print("  Vulnerability Category:", vulnerability_category)
 
     if not origin:
         raise RuntimeError("Required Jira field 'Origin' was not found")
@@ -253,6 +260,9 @@ def discover_fields(client):
     if not security_backlog_jira_id:
         print("WARNING: Jira field 'Security Backlog Jira ID' was not found; value will be blank.")
 
+    if not vulnerability_category:
+        print("WARNING: Jira field 'Vulnerability Category' was not found; value will be blank.")
+
     return {
         "origin": origin,
         "cross_team": cross_team,
@@ -262,6 +272,7 @@ def discover_fields(client):
         "security_cvss": security_cvss,
         "security_status_next_version": security_status_next_version,
         "security_backlog_jira_id": security_backlog_jira_id,
+        "vulnerability_category": vulnerability_category,
     }
 
 
@@ -277,6 +288,7 @@ def requested_fields(custom_fields):
         custom_fields.get("security_scan_type"), custom_fields.get("security_cvss"),
         custom_fields.get("security_status_next_version"),
         custom_fields.get("security_backlog_jira_id"),
+        custom_fields.get("vulnerability_category"),
     ):
         if field_id and field_id not in fields:
             fields.append(field_id)
@@ -337,6 +349,10 @@ def issue_to_record(issue, site_url, custom_fields):
         "security_backlog_jira_id": (
             jira_value(fields.get(custom_fields.get("security_backlog_jira_id")))
             if custom_fields.get("security_backlog_jira_id") else None
+        ),
+        "vulnerability_category": (
+            jira_value(fields.get(custom_fields.get("vulnerability_category")))
+            if custom_fields.get("vulnerability_category") else None
         ),
         "issue_url": f"{site_url.rstrip('/')}/browse/{issue.get('key')}",
         "raw_json": json.dumps(issue, ensure_ascii=False),
