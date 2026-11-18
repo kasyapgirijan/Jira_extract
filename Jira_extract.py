@@ -81,6 +81,7 @@ def main():
         "security_cvss": "Security CVSS",
         "security_status_next_version": "Security Status - Next Version",
         "security_backlog_jira_id": "Security Backlog Jira ID",
+        "vulnerability_category": "Vulnerability Category",
         "issue_url": "Issue URL",
     })
 
